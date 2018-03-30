@@ -8,6 +8,15 @@ import           Text.ParserCombinators.Parsec
 import           Text.ParserCombinators.Parsec.Expr
 import           Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token    as Token
+import Data.Functor.Identity
+
+println msg = trace (show msg) $ return ()
+
+seeNext :: Int -> Parser ()
+seeNext n = do
+  s <- getParserState
+  let out = take n (stateInput s)
+  println out
 
 --
 -- Grammar:
@@ -80,7 +89,7 @@ statement :: Parser Stmt
 statement = sequenceOfStmt
 
 sequenceOfStmt = do
-  list <- (sepBy1 statement' newline)
+  list <- (sepBy statement' newline)
   traceM("list :" ++ show list)
   return $
     if length list == 1
@@ -94,6 +103,7 @@ progStmt :: Parser Stmt
 progStmt = do
   reserved "begin"
   stmt <- statement
+  reserved "end"
   return $ Seq [stmt]
 
 ifStmt :: Parser Stmt
@@ -120,6 +130,7 @@ assignStmt = do
   id <- identifier
   reserved ":="
   expression <- expr
+  seeNext 10
   return $ Assign id expression
 
 expr :: Parser Expr
@@ -145,8 +156,7 @@ parseString str =
 parseFile :: String -> IO Stmt
 parseFile file = do
   program <- readFile file
-  list <- lines program
-  traceM("lines: " ++ show list)
+  traceM("program: " ++ show program)
   case parse whileParser "" program of
     Left e  -> print e >> fail "parse error"
     Right r -> return r
