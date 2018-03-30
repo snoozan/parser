@@ -1,13 +1,13 @@
 module Parser where
 
 import           Control.Monad
+import           Debug.Trace
 import           System.IO
 import           Text.Parsec.Char
 import           Text.ParserCombinators.Parsec
 import           Text.ParserCombinators.Parsec.Expr
 import           Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token    as Token
-import Debug.Trace
 
 --
 -- Grammar:
@@ -72,16 +72,22 @@ integer = Token.integer lexer -- parses an integer
 
 whiteSpace = Token.whiteSpace lexer -- parses whitespace
 
+whileParser :: Parser Stmt
+whileParser = whiteSpace >> statement
+
 statement :: Parser Stmt
-statement = do
-  list <- (sepEndBy statement' newline)
+statement = sequenceOfStmt
+
+sequenceOfStmt = do
+  list <- (sepBy1 statement' newline)
+  traceM("After we run sepBy1: " ++ show list)
   return $
     if length list == 1
       then head list
       else Seq list
 
 statement' :: Parser Stmt
-statement' = ifStmt <|> whileStmt <|> passStmt <|> assignStmt 
+statement' = progStmt <|> ifStmt <|> whileStmt <|> passStmt <|> assignStmt
 
 progStmt :: Parser Stmt
 progStmt = do
@@ -93,8 +99,8 @@ ifStmt :: Parser Stmt
 ifStmt = do
   reserved "if"
   cond <- expr
-  prog1 <- statement 
-  prog2 <- statement 
+  prog1 <- statement
+  prog2 <- statement
   return $ If cond prog1 prog2
 
 -- this won't work, expression is not a condition
@@ -102,7 +108,7 @@ whileStmt :: Parser Stmt
 whileStmt = do
   reserved "while"
   expression <- expr
-  prog1 <- statement 
+  prog1 <- statement
   return $ While expression prog1
 
 passStmt :: Parser Stmt
@@ -114,6 +120,7 @@ assignStmt = do
   reserved ":="
   expression <- expr
   return $ Assign id expression
+
 
 expr :: Parser Expr
 expr = buildExpressionParser operators term
@@ -131,13 +138,14 @@ term = liftM Id identifier <|> liftM Literal integer
 
 parseString :: String -> Stmt
 parseString str =
-  case parse progStmt "" str of
+  case parse whileParser "" str of
     Left e  -> error $ show e
     Right r -> r
 
 parseFile :: String -> IO Stmt
-parseFile file =
-  do program  <- readFile file
-     case parse statement "" program of
-       Left e  -> print e >> fail "parse error"
-       Right r -> return r
+parseFile file = do
+  program <- readFile file
+  traceM("file: " ++ show program)
+  case parse whileParser "" program of
+    Left e  -> print e >> fail "parse error"
+    Right r -> return r

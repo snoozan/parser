@@ -1,13 +1,11 @@
-module Main where 
+module Main where
 
-import Parser
-import System.IO
-import Control.Monad
+import           Control.Monad
+import           Parser
+import           System.IO
+import           Debug.Trace
 
 main :: IO ()
 main = do
-        handle <- openFile "test.txt" ReadMode
-        contents <- hGetContents handle
-        print (parseString contents)
-        hClose handle
-
+  ast <- parseFile "test.txt" 
+  traceM("ast: " ++ show ast)
