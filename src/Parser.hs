@@ -72,6 +72,7 @@ integer = Token.integer lexer -- parses an integer
 
 whiteSpace = Token.whiteSpace lexer -- parses whitespace
 
+
 whileParser :: Parser Stmt
 whileParser = whiteSpace >> statement
 
@@ -80,7 +81,7 @@ statement = sequenceOfStmt
 
 sequenceOfStmt = do
   list <- (sepBy1 statement' newline)
-  traceM("After we run sepBy1: " ++ show list)
+  traceM("list :" ++ show list)
   return $
     if length list == 1
       then head list
@@ -121,7 +122,6 @@ assignStmt = do
   expression <- expr
   return $ Assign id expression
 
-
 expr :: Parser Expr
 expr = buildExpressionParser operators term
 
@@ -145,7 +145,8 @@ parseString str =
 parseFile :: String -> IO Stmt
 parseFile file = do
   program <- readFile file
-  traceM("file: " ++ show program)
+  list <- lines program
+  traceM("lines: " ++ show list)
   case parse whileParser "" program of
     Left e  -> print e >> fail "parse error"
     Right r -> return r
