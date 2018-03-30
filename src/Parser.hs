@@ -1,22 +1,19 @@
+-- Susan Lunn
+-- skl1958@rit.edu
+
 module Parser where
 
 import           Control.Monad
 import           Debug.Trace
 import           System.IO
-import           Text.Parsec.Char
-import           Text.ParserCombinators.Parsec
-import           Text.ParserCombinators.Parsec.Expr
-import           Text.ParserCombinators.Parsec.Language
-import qualified Text.ParserCombinators.Parsec.Token    as Token
-import Data.Functor.Identity
 
-println msg = trace (show msg) $ return ()
-
-seeNext :: Int -> Parser ()
-seeNext n = do
-  s <- getParserState
-  let out = take n (stateInput s)
-  println out
+import           Data.Functor.Identity
+import qualified Data.Text                  as Text
+import qualified Data.Text.IO               as Text
+import           Text.Megaparsec
+import           Text.Megaparsec.Char
+import qualified Text.Megaparsec.Char.Lexer as L
+import           Text.Megaparsec.Expr
 
 --
 -- Grammar:
@@ -61,36 +58,64 @@ data Stmt
   | Pass
   deriving (Show)
 
-languageDef =
-  emptyDef
-    { Token.identStart = letter
-    , Token.identLetter = alphaNum
-    , Token.reservedNames = ["begin", "end", "if", "while", "pass"]
-    , Token.reservedOpNames = ["+", "-", "*", "/", ":="]
-    }
+-- languageDef =
+--   emptyDef
+--     { Token.identStart = letter
+--     , Token.identLetter = alphaNumChar
+--     , Token.symbolNames = ["begin", "end", "if", "while", "pass"]
+--     , Token.symbolOpNames = ["+", "-", "*", "/", ":="]
+--     }
+type Parser = Parsec () String
 
-lexer = Token.makeTokenParser languageDef
+simpleWhiteSpace = void $ (void $ takeWhile1P Nothing f)
+  where
+    f x = x == ' ' || x == '\t'
 
-identifier = Token.identifier lexer -- parses an identifier
+sc :: Parser () -- ‘sc’ stands for “space consumer”
+sc = do
+  traceM("attemtping to strip whiteSpace")
+  L.space simpleWhiteSpace lineComment blockComment
+    where
+      lineComment = L.skipLineComment "//"
+      blockComment = L.skipBlockComment "/*" "*/"
 
-reserved = Token.reserved lexer -- parses a reserved name
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme sc
 
-reservedOp = Token.reservedOp lexer -- parses an operator
+symbol :: String -> Parser String
+symbol = L.symbol sc
 
-integer = Token.integer lexer -- parses an integer
+integer :: Parser Integer
+integer = lexeme L.decimal
 
-whiteSpace = Token.whiteSpace lexer -- parses whitespace
+wSpace :: Parser String
+wSpace = symbol "\n"
 
+rword :: String -> Parser ()
+rword w = do
+   (lexeme . try) (string w *> notFollowedBy alphaNumChar)
+
+rws :: [String] -- list of reserved words
+rws = ["if", "while", "pass", "begin", "end"]
+
+identifier :: Parser String
+identifier = (lexeme . try) (p >>= check)
+  where
+    p = (:) <$> letterChar <*> many alphaNumChar
+    check x =
+      if x `elem` rws
+        then fail $ "keyword " ++ show x ++ " cannot be an identifier"
+        else return x
 
 whileParser :: Parser Stmt
-whileParser = whiteSpace >> statement
+whileParser = between sc newline statement
 
 statement :: Parser Stmt
 statement = sequenceOfStmt
 
 sequenceOfStmt = do
-  list <- (sepBy statement' newline)
-  traceM("list :" ++ show list)
+  list <- sepBy1 statement' wSpace 
+  traceM ("list :" ++ show list)
   return $
     if length list == 1
       then head list
@@ -101,14 +126,14 @@ statement' = progStmt <|> ifStmt <|> whileStmt <|> passStmt <|> assignStmt
 
 progStmt :: Parser Stmt
 progStmt = do
-  reserved "begin"
+  rword "begin"
   stmt <- statement
-  reserved "end"
+  rword "end"
   return $ Seq [stmt]
 
 ifStmt :: Parser Stmt
 ifStmt = do
-  reserved "if"
+  rword "if"
   cond <- expr
   prog1 <- statement
   prog2 <- statement
@@ -117,35 +142,35 @@ ifStmt = do
 -- this won't work, expression is not a condition
 whileStmt :: Parser Stmt
 whileStmt = do
-  reserved "while"
+  rword "while"
   expression <- expr
   prog1 <- statement
   return $ While expression prog1
 
 passStmt :: Parser Stmt
-passStmt = reserved "pass" >> return Pass
+passStmt = rword "pass" >> return Pass
 
 assignStmt :: Parser Stmt
 assignStmt = do
   id <- identifier
-  reserved ":="
+  void (symbol ":=")
   expression <- expr
-  seeNext 10
   return $ Assign id expression
 
 expr :: Parser Expr
-expr = buildExpressionParser operators term
+expr = liftM Id identifier <|> liftM Literal integer <|> operator
 
-operators =
-  [ [ Infix (reservedOp "+" >> return (ExprOp Add)) AssocLeft
-    , Infix (reservedOp "-" >> return (ExprOp Subtract)) AssocLeft
-    ]
-  , [ Infix (reservedOp "*" >> return (ExprOp Multiply)) AssocLeft
-    , Infix (reservedOp "/" >> return (ExprOp Divide)) AssocLeft
-    ]
-  ]
-
-term = liftM Id identifier <|> liftM Literal integer
+operator :: Parser Expr
+operator = do
+  op <- oneOf "+-*/"
+  lhs <- expr
+  rhs <- expr
+  return $ ExprOp (convertOp op) lhs rhs
+  where
+    convertOp '+' = Add
+    convertOp '*' = Multiply
+    convertOp '-' = Subtract
+    convertOp '/' = Divide
 
 parseString :: String -> Stmt
 parseString str =
@@ -156,7 +181,6 @@ parseString str =
 parseFile :: String -> IO Stmt
 parseFile file = do
   program <- readFile file
-  traceM("program: " ++ show program)
-  case parse whileParser "" program of
+  case parse statement "" program of
     Left e  -> print e >> fail "parse error"
     Right r -> return r
