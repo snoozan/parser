@@ -20,7 +20,7 @@ import           Text.Megaparsec.Expr
 -- Prog ::= Stmt | /*begin*/ StmtSeq /*end*/
 -- StmtSeq ::= Stmt | Stmt StmtSeq
 --
--- Stmt ::= Assgn | If | While | /*pass*/
+-- Stmt ::= Assgn | If | While | /*pass*/ | begin StmtSeq end
 -- Assgn ::= id := Expr
 -- If ::= if Expr Prog Prog
 -- While ::= while Expr Prog
@@ -47,15 +47,14 @@ data Op
   deriving (Show)
 
 data Stmt
-  = Seq [Stmt]
+  = Beg [Stmt]
   | Assign String
            Expr
   | If Expr
-       Stmt
-       Stmt
   | While Expr
           Stmt
   | Pass
+  | End 
   deriving (Show)
 
 -- languageDef =
@@ -108,36 +107,40 @@ identifier = (lexeme . try) (p >>= check)
         else return x
 
 whileParser :: Parser Stmt
-whileParser = between sc newline statement
+whileParser = between sc eof statement
 
 statement :: Parser Stmt
 statement = sequenceOfStmt
 
 sequenceOfStmt = do
   list <- sepBy1 statement' wSpace 
-  traceM ("list :" ++ show list)
   return $
     if length list == 1
       then head list
-      else Seq list
+      else Beg list
 
 statement' :: Parser Stmt
-statement' = progStmt <|> ifStmt <|> whileStmt <|> passStmt <|> assignStmt
+statement' = begStmt <|> ifStmt <|> whileStmt <|> passStmt <|> assignStmt <|> endStmt
 
-progStmt :: Parser Stmt
-progStmt = do
+begStmt :: Parser Stmt
+begStmt = do
   rword "begin"
+  void (space)
   stmt <- statement
+  return $ Beg [stmt]
+
+endStmt :: Parser Stmt
+endStmt = do
   rword "end"
-  return $ Seq [stmt]
+  void(space)
+  return $ End 
 
 ifStmt :: Parser Stmt
 ifStmt = do
   rword "if"
+  void (space)
   cond <- expr
-  prog1 <- statement
-  prog2 <- statement
-  return $ If cond prog1 prog2
+  return $ If cond 
 
 -- this won't work, expression is not a condition
 whileStmt :: Parser Stmt
@@ -148,13 +151,19 @@ whileStmt = do
   return $ While expression prog1
 
 passStmt :: Parser Stmt
-passStmt = rword "pass" >> return Pass
+passStmt = do 
+  rword "pass" 
+  void (space)
+  return $ Pass
 
 assignStmt :: Parser Stmt
 assignStmt = do
+  traceM("assigning ")
   id <- identifier
+  traceM ("id :" ++ show id)
   void (symbol ":=")
   expression <- expr
+  traceM ("expr :" ++ show expression)
   return $ Assign id expression
 
 expr :: Parser Expr
@@ -163,6 +172,7 @@ expr = liftM Id identifier <|> liftM Literal integer <|> operator
 operator :: Parser Expr
 operator = do
   op <- oneOf "+-*/"
+  void(space)
   lhs <- expr
   rhs <- expr
   return $ ExprOp (convertOp op) lhs rhs

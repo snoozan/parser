@@ -3,7 +3,6 @@ begin
     i := 10
     while i begin
         if - i 5
-            pass
             sum := + sum * i i
         i := - i 1
     end
