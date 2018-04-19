@@ -1,9 +1,7 @@
-begin
-    sum := 0
-    i := 10
-    while i begin
-        if - i 5
-            sum := + sum * i i
-        i := - i 1
-    end
-end
+a := 2
+s := 0
+while - a 12
+      begin
+      s := + s * a a
+      a := + a 2
+      end

@@ -1,5 +1,7 @@
 -- Susan Lunn
 -- skl1958@rit.edu
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE RecordWildCards    #-}
 
 module Parser where
 
@@ -7,6 +9,8 @@ import           Control.Monad
 import           Debug.Trace
 import           System.IO
 
+import           Data.Data
+import Data.Maybe
 import           Data.Functor.Identity
 import qualified Data.Text                  as Text
 import qualified Data.Text.IO               as Text
@@ -40,21 +44,22 @@ data Expr
   deriving (Show)
 
 data Op
-  = Add
-  | Subtract
-  | Multiply
-  | Divide
+  = ADD
+  | SUB
+  | MULT
+  | DIV
   deriving (Show)
 
 data Stmt
-  = Beg [Stmt]
+  = Seq [Stmt]
   | Assign String
            Expr
   | If Expr
   | While Expr
           Stmt
   | Pass
-  | End 
+  | Beg Stmt
+  | End
   deriving (Show)
 
 -- languageDef =
@@ -66,17 +71,18 @@ data Stmt
 --     }
 type Parser = Parsec () String
 
+-- we need to create our own white space consumer - we don't
+-- want to eat newlines!
 simpleWhiteSpace = void $ (void $ takeWhile1P Nothing f)
   where
     f x = x == ' ' || x == '\t'
 
 sc :: Parser () -- ‘sc’ stands for “space consumer”
 sc = do
-  traceM("attemtping to strip whiteSpace")
   L.space simpleWhiteSpace lineComment blockComment
-    where
-      lineComment = L.skipLineComment "//"
-      blockComment = L.skipBlockComment "/*" "*/"
+  where
+    lineComment = L.skipLineComment "//"
+    blockComment = L.skipBlockComment "/*" "*/"
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
@@ -92,7 +98,7 @@ wSpace = symbol "\n"
 
 rword :: String -> Parser ()
 rword w = do
-   (lexeme . try) (string w *> notFollowedBy alphaNumChar)
+  (lexeme . try) (string w *> notFollowedBy alphaNumChar)
 
 rws :: [String] -- list of reserved words
 rws = ["if", "while", "pass", "begin", "end"]
@@ -106,82 +112,118 @@ identifier = (lexeme . try) (p >>= check)
         then fail $ "keyword " ++ show x ++ " cannot be an identifier"
         else return x
 
+-- The actual parsing bits
+-- using the space consumer parser and eof
+-- both must succeed to succeed the parsing
 whileParser :: Parser Stmt
 whileParser = between sc eof statement
 
+-- we can probably get rid of this, but
+-- it makes it easier to read
 statement :: Parser Stmt
 statement = sequenceOfStmt
 
+-- Returns a Parser Stmt
+-- Seperate our statement by wSpace aka "\n"
+-- but what if everything is on the same line?
+-- :(
 sequenceOfStmt = do
-  list <- sepBy1 statement' wSpace 
+  list <- sepBy1 statement' wSpace
   return $
     if length list == 1
       then head list
-      else Beg list
+      else Seq list
 
+-- The possible statements defined below
 statement' :: Parser Stmt
-statement' = begStmt <|> ifStmt <|> whileStmt <|> passStmt <|> assignStmt <|> endStmt
+statement' =
+  begStmt <|> ifStmt <|> whileStmt <|> passStmt <|> assignStmt <|> endStmt
 
 begStmt :: Parser Stmt
 begStmt = do
   rword "begin"
   void (space)
   stmt <- statement
-  return $ Beg [stmt]
+  return $ Beg (Seq [stmt])
 
 endStmt :: Parser Stmt
 endStmt = do
   rword "end"
-  void(space)
-  return $ End 
+  void (space)
+  return $ End
 
 ifStmt :: Parser Stmt
 ifStmt = do
   rword "if"
   void (space)
   cond <- expr
-  return $ If cond 
+  return $ If cond
 
--- this won't work, expression is not a condition
 whileStmt :: Parser Stmt
 whileStmt = do
   rword "while"
   expression <- expr
+  let strExpr = showLiteral expression
+  when (isJust strExpr) $ traceM ("PUSH " ++ (fromJust strExpr))
+  void (space)
   prog1 <- statement
   return $ While expression prog1
 
 passStmt :: Parser Stmt
-passStmt = do 
-  rword "pass" 
+passStmt = do
+  rword "pass"
   void (space)
   return $ Pass
 
 assignStmt :: Parser Stmt
 assignStmt = do
-  traceM("assigning ")
   id <- identifier
-  traceM ("id :" ++ show id)
   void (symbol ":=")
   expression <- expr
-  traceM ("expr :" ++ show expression)
+  let strExpr = showLiteral expression
+  when (isJust strExpr) $ traceM ("PUSH " ++ (fromJust strExpr))
+  traceM ("STORE " ++ id)
   return $ Assign id expression
 
+
+-- Expressions: lift the Id and Literal from their respective monads
+-- operator is already a self contained thing
 expr :: Parser Expr
 expr = liftM Id identifier <|> liftM Literal integer <|> operator
+
+-- Pattern match our literal out
+-- if it's an id, return nothong
+-- if it's a literal, return it
+-- if it's an expression, try the first expr for a literal or try to second
+showLiteral :: Expr -> Maybe String 
+showLiteral (Id a) = Nothing 
+showLiteral (Literal a) = Just (show a)
+showLiteral (ExprOp op expr1 expr2) = showLiteral expr2 <|> showLiteral expr1
+
+-- Pattern match out our id
+showId :: Expr -> Maybe String
+showId (Id a) = Just a
+showId (Literal a) = Nothing
+showId (ExprOp op expr1 expr2) = Nothing 
 
 operator :: Parser Expr
 operator = do
   op <- oneOf "+-*/"
-  void(space)
+  void (space)
   lhs <- expr
+  let strLhs = showId lhs 
+  when (isJust strLhs) $ traceM ( "LOAD " ++ (fromJust strLhs))
   rhs <- expr
+  traceM(show (convertOp op))
   return $ ExprOp (convertOp op) lhs rhs
-  where
-    convertOp '+' = Add
-    convertOp '*' = Multiply
-    convertOp '-' = Subtract
-    convertOp '/' = Divide
 
+convertOp :: Char -> Op
+convertOp '+' = ADD
+convertOp '*' = MULT
+convertOp '-' = SUB
+convertOp '/' = DIV
+
+-- Some helper functions for parsing input
 parseString :: String -> Stmt
 parseString str =
   case parse whileParser "" str of
