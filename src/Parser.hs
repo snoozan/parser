@@ -10,8 +10,8 @@ import           Debug.Trace
 import           System.IO
 
 import           Data.Data
-import Data.Maybe
 import           Data.Functor.Identity
+import           Data.Maybe
 import qualified Data.Text                  as Text
 import qualified Data.Text.IO               as Text
 import           Text.Megaparsec
@@ -164,7 +164,6 @@ whileStmt = do
   rword "while"
   expression <- expr
   let strExpr = showLiteral expression
-  when (isJust strExpr) $ traceM ("PUSH " ++ (fromJust strExpr))
   void (space)
   prog1 <- statement
   return $ While expression prog1
@@ -180,11 +179,17 @@ assignStmt = do
   id <- identifier
   void (symbol ":=")
   expression <- expr
-  let strExpr = showLiteral expression
+  let strExpr = showLiteralOnly expression
   when (isJust strExpr) $ traceM ("PUSH " ++ (fromJust strExpr))
   traceM ("STORE " ++ id)
   return $ Assign id expression
 
+-- if it's a literally immediate after the assign
+-- it's safe to assume this is a push statement
+showLiteralOnly :: Expr -> Maybe String
+showLiteralOnly (Id a)                  = Nothing
+showLiteralOnly (Literal a)             = Just (show a)
+showLiteralOnly (ExprOp op expr1 expr2) = Nothing
 
 -- Expressions: lift the Id and Literal from their respective monads
 -- operator is already a self contained thing
@@ -195,26 +200,27 @@ expr = liftM Id identifier <|> liftM Literal integer <|> operator
 -- if it's an id, return nothong
 -- if it's a literal, return it
 -- if it's an expression, try the first expr for a literal or try to second
-showLiteral :: Expr -> Maybe String 
-showLiteral (Id a) = Nothing 
-showLiteral (Literal a) = Just (show a)
-showLiteral (ExprOp op expr1 expr2) = showLiteral expr2 <|> showLiteral expr1
+showLiteral :: Expr -> Maybe String
+showLiteral (Id a)                  = Just ("LOAD " ++ a)
+showLiteral (Literal a)             = Just ("PUSH " ++ show a)
+showLiteral (ExprOp op expr1 expr2) = Nothing 
 
 -- Pattern match out our id
-showId :: Expr -> Maybe String
-showId (Id a) = Just a
-showId (Literal a) = Nothing
-showId (ExprOp op expr1 expr2) = Nothing 
-
+--showId :: Expr -> Maybe String
+--showId (Id a) = Just a
+--showId (Literal a) = Nothing
+--showId (ExprOp op expr1 expr2) = Nothing
 operator :: Parser Expr
 operator = do
   op <- oneOf "+-*/"
   void (space)
   lhs <- expr
-  let strLhs = showId lhs 
-  when (isJust strLhs) $ traceM ( "LOAD " ++ (fromJust strLhs))
+  let strLhs = showLiteral lhs
+  when (isJust strLhs) $ traceM (fromJust strLhs)
   rhs <- expr
-  traceM(show (convertOp op))
+  let strRhs = showLiteral rhs
+  when (isJust strRhs) $ traceM (fromJust strRhs)
+  traceM (show (convertOp op))
   return $ ExprOp (convertOp op) lhs rhs
 
 convertOp :: Char -> Op
